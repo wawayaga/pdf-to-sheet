@@ -2,7 +2,5 @@ gradio
 modal
 pandas
 openpyxl
-supabase
-python-dotenv
 huggingface_hub
 openai
