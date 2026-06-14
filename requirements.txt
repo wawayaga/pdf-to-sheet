@@ -1,0 +1,6 @@
+gradio
+modal
+supabase
+python-dotenv
+huggingface_hub
+openai
