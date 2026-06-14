@@ -1,79 +1,102 @@
-import json
-from urllib.error import URLError
-from urllib.parse import parse_qs, urlencode, urlparse
-from urllib.request import urlopen
+import tempfile
+from pathlib import Path
 
 import modal
-
-from database import recipe_exists, save_recipe
-
-
-MODAL_APP_NAME = "recipe-saver"
+import pandas as pd
 
 
-def lookup_modal_function(function_name):
-    lookup = getattr(modal.Function, "lookup", modal.Function.from_name)
-    return lookup(MODAL_APP_NAME, function_name)
+MODAL_APP_NAME = "tender-extractor"
+
+RESUMEN_COLUMNS = {
+    "id_licitacion": "Id de la licitación",
+    "nombre": "Nombre",
+    "descripcion": "Descripción",
+    "licitante": "Licitante",
+    "fecha_cierre": "Fecha de cierre",
+    "hora_cierre": "Hora de cierre",
+    "monto": "Monto",
+    "duracion": "Duración",
+}
+
+FICHA_COLUMNS = {
+    "id_licitacion": "Id de la licitación",
+    "nombre": "Nombre",
+    "licitante": "Licitante",
+    "fecha_cierre": "Fecha de cierre",
+    "hora_cierre": "Hora de cierre",
+    "monto": "Monto",
+    "duracion_contrato": "Duración del contrato",
+}
+
+CRITERIOS_COLUMNS = {
+    "criterio": "Criterio",
+    "descripcion": "Descripción",
+    "ponderacion": "Ponderación",
+    "numero_anexo": "Número de anexo",
+}
+
+EQUIPO_COLUMNS = {
+    "rol": "Rol",
+    "requisitos": "Requisitos",
+}
 
 
 def get_modal_functions():
-    get_transcript = lookup_modal_function("get_transcript")
-    extract_recipe = lookup_modal_function("extract_recipe")
-    return get_transcript, extract_recipe
+    extract_pdf_text = modal.Function.from_name(MODAL_APP_NAME, "extract_pdf_text")
+    extract_tender_info = modal.Function.from_name(
+        MODAL_APP_NAME,
+        "extract_tender_info",
+    )
+    return extract_pdf_text, extract_tender_info
 
 
-def get_youtube_video_id(youtube_url):
-    parsed_url = urlparse(youtube_url)
-    host = parsed_url.netloc.removeprefix("www.")
-
-    if host == "youtu.be":
-        video_id = parsed_url.path.strip("/").split("/")[0]
-    elif parsed_url.path == "/watch":
-        video_id = parse_qs(parsed_url.query).get("v", [""])[0]
-    elif parsed_url.path.startswith(("/shorts/", "/embed/")):
-        video_id = parsed_url.path.strip("/").split("/")[1]
-    else:
-        video_id = ""
-
-    if not video_id:
-        raise ValueError("Could not determine the YouTube video id from the URL.")
-
-    return video_id
+def build_dataframe(data, columns):
+    rows = data if isinstance(data, list) else [data or {}]
+    return pd.DataFrame(rows).reindex(columns=columns.keys()).rename(columns=columns)
 
 
-def get_video_title(youtube_url):
-    query = urlencode({"url": youtube_url, "format": "json"})
-    oembed_url = f"https://www.youtube.com/oembed?{query}"
+def save_excel(tender_info):
+    output_file = tempfile.NamedTemporaryFile(
+        suffix=".xlsx",
+        prefix="licitacion_",
+        delete=False,
+    )
+    output_path = output_file.name
+    output_file.close()
 
-    try:
-        with urlopen(oembed_url, timeout=10) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except (OSError, URLError, json.JSONDecodeError):
-        return "Untitled recipe"
+    sheets = {
+        "Resumen de la licitación": build_dataframe(
+            tender_info.get("resumen"),
+            RESUMEN_COLUMNS,
+        ),
+        "Ficha de la licitación": build_dataframe(
+            tender_info.get("ficha"),
+            FICHA_COLUMNS,
+        ),
+        "Criterios de evaluación": build_dataframe(
+            tender_info.get("criterios_evaluacion", []),
+            CRITERIOS_COLUMNS,
+        ),
+        "Equipo profesional": build_dataframe(
+            tender_info.get("equipo_profesional", []),
+            EQUIPO_COLUMNS,
+        ),
+    }
 
-    return data.get("title") or "Untitled recipe"
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        for sheet_name, dataframe in sheets.items():
+            dataframe.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    return output_path
 
 
-def run_pipeline(youtube_url):
-    if recipe_exists(youtube_url):
-        raise ValueError("This recipe is already saved.")
-
-    video_id = get_youtube_video_id(youtube_url)
-    title = get_video_title(youtube_url)
-    thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+def run_pipeline(pdf_path):
+    pdf_bytes = Path(pdf_path).read_bytes()
 
     with modal.enable_output():
-        get_transcript, extract_recipe = get_modal_functions()
-        transcript = get_transcript.remote(youtube_url)
-        recipe = extract_recipe.remote(transcript)
-    ingredients = recipe["ingredients"]
-    steps = recipe["steps"]
+        extract_pdf_text, extract_tender_info = get_modal_functions()
+        text = extract_pdf_text.remote(pdf_bytes)
+        tender_info = extract_tender_info.remote(text)
 
-    save_recipe(title, ingredients, steps, youtube_url, thumbnail_url)
-
-    return {
-        "ingredients": ingredients,
-        "steps": steps,
-        "title": title,
-        "thumbnail_url": thumbnail_url,
-    }
+    excel_path = save_excel(tender_info)
+    return tender_info, excel_path

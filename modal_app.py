@@ -1,39 +1,46 @@
 import modal
 
-modal_app = modal.App("recipe-saver")
+modal_app = modal.App("tender-extractor")
 
-image = modal.Image.debian_slim().apt_install("ffmpeg").pip_install(
-    "torch",
-    "transformers",
-    "huggingface_hub",
-    "youtube-transcript-api",
+image = (
+    modal.Image.debian_slim()
+    .apt_install("tesseract-ocr", "tesseract-ocr-spa", "poppler-utils")
+    .pip_install(
+        "pdfplumber",
+        "pdf2image",
+        "pytesseract",
+        "pillow",
+        "torch",
+        "transformers",
+        "huggingface_hub",
+    )
 )
 
 
 @modal_app.function(image=image, timeout=1800)
-def get_transcript(youtube_url):
-    from urllib.parse import parse_qs, urlparse
+def extract_pdf_text(pdf_bytes):
+    import io
 
-    from youtube_transcript_api import YouTubeTranscriptApi
+    import pdfplumber
+    import pytesseract
+    from pdf2image import convert_from_bytes
 
-    parsed_url = urlparse(youtube_url)
-    host = parsed_url.netloc.removeprefix("www.")
+    page_texts = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            page_texts.append(page.extract_text() or "")
 
-    if host == "youtu.be":
-        video_id = parsed_url.path.strip("/").split("/")[0]
-    elif parsed_url.path == "/watch":
-        video_id = parse_qs(parsed_url.query).get("v", [""])[0]
-    elif parsed_url.path.startswith(("/shorts/", "/embed/")):
-        video_id = parsed_url.path.strip("/").split("/")[1]
-    else:
-        video_id = ""
+    page_count = len(page_texts)
+    extracted_text = "\n\n".join(text.strip() for text in page_texts).strip()
+    average_chars_per_page = len(extracted_text) / page_count if page_count else 0
 
-    if not video_id:
-        raise ValueError("Could not determine the YouTube video id from the URL.")
+    if average_chars_per_page < 50:
+        images = convert_from_bytes(pdf_bytes)
+        page_texts = [
+            pytesseract.image_to_string(image, lang="spa") for image in images
+        ]
 
-    transcript = YouTubeTranscriptApi().fetch(video_id)
-    snippets = transcript.to_raw_data()
-    return " ".join(snippet["text"] for snippet in snippets)
+    return "\n\n".join(text.strip() for text in page_texts).strip()
 
 
 @modal_app.function(
@@ -42,7 +49,7 @@ def get_transcript(youtube_url):
     timeout=1800,
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
-def extract_recipe(transcript):
+def extract_tender_info(text):
     import json
     import os
     import re
@@ -63,20 +70,38 @@ def extract_recipe(transcript):
     )
 
     prompt = (
-        "<s>[INST] Extract a recipe from the transcript below. "
-        "Return only valid JSON with exactly these keys: "
-        '"ingredients" (a list of strings) and "steps" (a list of strings). '
-        "For every ingredient, always include the quantity and unit in the same "
-        'string as the ingredient name when the transcript mentions one, such as '
-        '"100ml water", "500g flour", or "2 tablespoons olive oil". '
-        "Do not separate quantities, units, and ingredient names into different "
-        "fields or strings. "
-        "Do not include markdown, comments, or any extra text.\n\n"
-        f"Transcript:\n{transcript} [/INST]"
+        "<s>[INST] Eres un extractor de informacion para documentos de bases "
+        "de licitacion. Extrae la informacion solicitada del texto entregado. "
+        "Devuelve SOLO JSON valido, sin markdown, comentarios, explicaciones "
+        "ni texto adicional. El JSON debe tener exactamente esta estructura:\n"
+        "{\n"
+        '  "resumen": {\n'
+        '    "id_licitacion": "", "nombre": "", "descripcion": "",\n'
+        '    "licitante": "", "fecha_cierre": "", "hora_cierre": "",\n'
+        '    "monto": "", "duracion": ""\n'
+        "  },\n"
+        '  "ficha": {\n'
+        '    "id_licitacion": "", "nombre": "", "licitante": "",\n'
+        '    "fecha_cierre": "", "hora_cierre": "", "monto": "",\n'
+        '    "duracion_contrato": ""\n'
+        "  },\n"
+        '  "criterios_evaluacion": [\n'
+        '    {"criterio": "", "descripcion": "", "ponderacion": "", '
+        '"numero_anexo": ""}\n'
+        "  ],\n"
+        '  "equipo_profesional": [\n'
+        '    {"rol": "", "requisitos": ""}\n'
+        "  ]\n"
+        "}\n\n"
+        'Si un campo no se encuentra, usa "No especificado". '
+        "criterios_evaluacion y equipo_profesional deben contener un objeto "
+        "por cada item encontrado, y pueden ser listas vacias si no hay items. "
+        "No inventes datos.\n\n"
+        f"Texto del documento:\n{text} [/INST]"
     )
     output = generator(
         prompt,
-        max_new_tokens=1024,
+        max_new_tokens=2048,
         do_sample=False,
         temperature=0,
         return_full_text=False,
@@ -86,8 +111,4 @@ def extract_recipe(transcript):
     if not json_match:
         raise ValueError(f"Model did not return a JSON object: {output}")
 
-    recipe = json.loads(json_match.group(0))
-    return {
-        "ingredients": [str(item) for item in recipe.get("ingredients", [])],
-        "steps": [str(item) for item in recipe.get("steps", [])],
-    }
+    return json.loads(json_match.group(0))
