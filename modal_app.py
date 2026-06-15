@@ -1,6 +1,7 @@
 import modal
 
 modal_app = modal.App("tender-extractor")
+app = modal_app
 
 image = (
     modal.Image.debian_slim()
@@ -45,7 +46,7 @@ def extract_pdf_text(pdf_bytes):
 
 @modal_app.function(
     image=image,
-    gpu="A10G",
+    gpu="A100",
     timeout=1800,
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
@@ -69,6 +70,8 @@ def extract_tender_info(text):
         device=0,
     )
 
+    text = text[:100000]
+
     prompt = (
         "<s>[INST] Eres un extractor de informacion para documentos de bases "
         "de licitacion. Extrae la informacion solicitada del texto entregado. "
@@ -77,11 +80,11 @@ def extract_tender_info(text):
         "{\n"
         '  "resumen": {\n'
         '    "id_licitacion": "", "nombre": "", "descripcion": "",\n'
-        '    "licitante": "", "fecha_cierre": "", "hora_cierre": "",\n'
+        '    "mandante": "", "fecha_cierre": "", "hora_cierre": "",\n'
         '    "monto": "", "duracion": ""\n'
         "  },\n"
         '  "ficha": {\n'
-        '    "id_licitacion": "", "nombre": "", "licitante": "",\n'
+        '    "id_licitacion": "", "nombre": "", "mandante": "",\n'
         '    "fecha_cierre": "", "hora_cierre": "", "monto": "",\n'
         '    "duracion_contrato": ""\n'
         "  },\n"
