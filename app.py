@@ -4,6 +4,20 @@ import traceback
 from pipeline import run_pipeline
 
 
+APP_THEME = "harsh8001/cartoon-style"
+
+APP_CSS = """
+.completion-audio {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+"""
+
+
 def get_uploaded_pdf_path(uploaded_pdf):
     if uploaded_pdf is None:
         raise ValueError("Sube un archivo PDF para procesar.")
@@ -17,69 +31,82 @@ def get_uploaded_pdf_path(uploaded_pdf):
 def process_pdf(uploaded_pdf):
     try:
         pdf_path = get_uploaded_pdf_path(uploaded_pdf)
-        extracted_info, excel_path = run_pipeline(pdf_path)
+        _, excel_path = run_pipeline(pdf_path)
     except ValueError as error:
         gr.Warning(str(error))
         return (
-            None,
-            None,
+            gr.update(value=None, visible=False),
             gr.update(visible=False),
             gr.update(visible=False),
+            "error.mp3",
         )
     except Exception as error:
         traceback.print_exc()
         gr.Error(f"El procesamiento falló: {error}")
         return (
-            None,
-            None,
+            gr.update(value=None, visible=False),
             gr.update(visible=False),
             gr.update(visible=False),
+            "error.mp3",
         )
 
     return (
-        extracted_info,
-        excel_path,
+        gr.update(value=excel_path, visible=True),
         gr.update(visible=False),
         gr.update(visible=True),
+        "success.wav",
     )
 
 
 def show_processing_status():
-    return gr.update(
-        value="Procesando... esto puede tardar unos minutos",
-        visible=True,
+    message = "Procesando... esto puede tardar unos minutos"
+    return (
+        gr.update(
+            value=f'<span style="color: #333333;">{message}</span>',
+            visible=True,
+        ),
+        gr.update(value=None),
     )
 
 
-with gr.Blocks(theme="harsh8001/cartoon-style") as app:
+with gr.Blocks() as app:
     gr.Markdown("# Extractor de Licitaciones")
 
     with gr.Tab("Extractor"):
         pdf_input = gr.File(label="Subir PDF", file_types=[".pdf"])
         submit_button = gr.Button("Procesar", variant="primary")
         status_output = gr.Markdown(visible=False)
+        completion_audio = gr.Audio(
+            autoplay=True,
+            show_label=False,
+            buttons=[],
+            editable=False,
+            elem_classes=["completion-audio"],
+        )
 
         with gr.Group(visible=False) as result_group:
-            extracted_output = gr.JSON(label="Información extraída")
-            excel_output = gr.File(label="Descargar Excel")
+            excel_output = gr.File(
+                label="Descargar Excel",
+                visible=False,
+            )
 
         submit_button.click(
             fn=show_processing_status,
             inputs=None,
-            outputs=status_output,
+            outputs=[status_output, completion_audio],
             show_progress="full",
         ).then(
             fn=process_pdf,
             inputs=pdf_input,
             outputs=[
-                extracted_output,
                 excel_output,
                 status_output,
                 result_group,
+                completion_audio,
             ],
             show_progress="full",
         )
 
 
 if __name__ == "__main__":
-    app.launch()
+    app.launch(theme=APP_THEME, css=APP_CSS)
