@@ -51,9 +51,7 @@ def extract_pdf_text(pdf_bytes):
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
 def extract_tender_info(text):
-    import json
     import os
-    import re
 
     import torch
     from transformers import pipeline
@@ -71,10 +69,32 @@ def extract_tender_info(text):
     )
 
     text = text[:100000]
+    resumen_y_ficha = extract_resumen_y_ficha(generator, text)
+    criterios_evaluacion = extract_criterios_evaluacion(generator, text)
+    equipo_profesional = extract_equipo_profesional(generator, text)
 
+    return {
+        "resumen": resumen_y_ficha.get("resumen", {}),
+        "ficha": resumen_y_ficha.get("ficha", {}),
+        "criterios_evaluacion": criterios_evaluacion,
+        "equipo_profesional": equipo_profesional,
+    }
+
+
+def extract_resumen_y_ficha(generator, text):
     prompt = (
         "<s>[INST] Eres un extractor de informacion para documentos de bases "
-        "de licitacion. Extrae la informacion solicitada del texto entregado. "
+        "de licitacion. Extrae solo el resumen y la ficha de la licitacion." \
+        "El mandante es la institución estatal que emitió el documento que estás analizando," \
+        "por lo que es común encontrar el nombre del mandante en los primeros 1000 caracteres"
+        " del texto como la institución (municipalidad, ministerio o seremi) que ofrece los fondos a concursar." \
+        "El monto siempre es un número y está expresado en millones de pesos "
+        "chilenos, o en decenas o centenas de UF. Frecuentemente aparece como 'monto maximo disponible'."
+        "Es importante especificar el tipo de moneda en el campo llamado monto" \
+        "La fecha de cierre de la licitación se refiere a la fecha de cierre de "
+        "ingreso de las Ofertas Técnicas en el sistema www.mercadopublico.cl." \
+        "La duracion del contrato es el numero de meses que transcurren entre la fecha de la firma del contrato" \
+        "y el fin del contrato."
         "Devuelve SOLO JSON valido, sin markdown, comentarios, explicaciones "
         "ni texto adicional. El JSON debe tener exactamente esta estructura:\n"
         "{\n"
@@ -87,24 +107,73 @@ def extract_tender_info(text):
         '    "id_licitacion": "", "nombre": "", "mandante": "",\n'
         '    "fecha_cierre": "", "hora_cierre": "", "monto": "",\n'
         '    "duracion_contrato": ""\n'
-        "  },\n"
+        "  }\n"
+        "}\n\n"
+        'Si un campo no se encuentra, usa "No especificado". '
+        "No inventes datos.\n\n"
+        f"Texto del documento:\n{text} [/INST]"
+    )
+    return run_json_prompt(generator, prompt)
+
+
+def extract_criterios_evaluacion(generator, text):
+    prompt = (
+        "<s>[INST] Eres un extractor de informacion para documentos de bases "
+        "de licitacion. Extrae solo los criterios de evaluacion."
+        "Los criterios de evaluación siempre se encuentran en una tabla"
+        "que contiene las palabras 'Criterios de Evaluación' o 'Criterios de Evaluacion," \
+        "y esta contiene al menos dos columnas, una para el nombre del criterio y otra para la ponderación del puntaje total." \
+        "La ponderación del puntaje total puede aparecer como porcentaje o como fracción."
+        "Devuelve SOLO JSON valido, sin markdown, comentarios, explicaciones "
+        "ni texto adicional. El JSON debe tener exactamente esta estructura:\n"
+        "{\n"
         '  "criterios_evaluacion": [\n'
         '    {"criterio": "", "descripcion": "", "ponderacion": "", '
         '"numero_anexo": ""}\n'
-        "  ],\n"
+        "  ]\n"
+        "}\n\n"
+        "criterios_evaluacion debe contener un objeto por cada item encontrado "
+        "y puede ser una lista vacia si no hay items. "
+        'Si un campo no se encuentra, usa "No especificado". '
+        "No inventes datos.\n\n"
+        f"Texto del documento:\n{text} [/INST]"
+    )
+    data = run_json_prompt(generator, prompt)
+    return data.get("criterios_evaluacion", [])
+
+
+def extract_equipo_profesional(generator, text):
+    prompt = (
+        "<s>[INST] Eres un extractor de informacion para documentos de bases "
+        "de licitacion. Extrae solo el equipo profesional requerido." \
+        "El equipo profesional es un listado de profesionales (rol) que son necesarios"
+        "para la ejecución del servicio. Estos profesionales tienen requisitos como máster," \
+        "doctorado, diplomados, o especialidad en alguna área. Estos requisitos deben" \
+        "estar especificados en 'requisitos'"
+        "Devuelve SOLO JSON valido, sin markdown, comentarios, explicaciones "
+        "ni texto adicional. El JSON debe tener exactamente esta estructura:\n"
+        "{\n"
         '  "equipo_profesional": [\n'
         '    {"rol": "", "requisitos": ""}\n'
         "  ]\n"
         "}\n\n"
+        "equipo_profesional debe contener un objeto por cada item encontrado "
+        "y puede ser una lista vacia si no hay items. "
         'Si un campo no se encuentra, usa "No especificado". '
-        "criterios_evaluacion y equipo_profesional deben contener un objeto "
-        "por cada item encontrado, y pueden ser listas vacias si no hay items. "
         "No inventes datos.\n\n"
         f"Texto del documento:\n{text} [/INST]"
     )
+    data = run_json_prompt(generator, prompt)
+    return data.get("equipo_profesional", [])
+
+
+def run_json_prompt(generator, prompt, max_new_tokens=2048):
+    import json
+    import re
+
     output = generator(
         prompt,
-        max_new_tokens=2048,
+        max_new_tokens=max_new_tokens,
         do_sample=False,
         temperature=0,
         return_full_text=False,

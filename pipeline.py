@@ -11,7 +11,7 @@ RESUMEN_COLUMNS = {
     "id_licitacion": "Id de la licitación",
     "nombre": "Nombre",
     "descripcion": "Descripción",
-    "licitante": "Licitante",
+    "mandante": "Mandante",
     "fecha_cierre": "Fecha de cierre",
     "hora_cierre": "Hora de cierre",
     "monto": "Monto",
@@ -21,7 +21,7 @@ RESUMEN_COLUMNS = {
 FICHA_COLUMNS = {
     "id_licitacion": "Id de la licitación",
     "nombre": "Nombre",
-    "licitante": "Licitante",
+    "mandante": "Mandante",
     "fecha_cierre": "Fecha de cierre",
     "hora_cierre": "Hora de cierre",
     "monto": "Monto",
