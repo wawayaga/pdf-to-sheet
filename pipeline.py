@@ -40,6 +40,11 @@ EQUIPO_COLUMNS = {
     "requisitos": "Requisitos",
 }
 
+OBJETIVOS_COLUMNS = {
+    "objetivo_general": "Objetivo General",
+    "objetivos_especificos": "Objetivos específicos",
+}
+
 
 def get_modal_functions():
     extract_pdf_text = modal.Function.from_name(MODAL_APP_NAME, "extract_pdf_text")
@@ -53,6 +58,15 @@ def get_modal_functions():
 def build_dataframe(data, columns):
     rows = data if isinstance(data, list) else [data or {}]
     return pd.DataFrame(rows).reindex(columns=columns.keys()).rename(columns=columns)
+
+
+def build_horizontal_dataframe(data, columns, item_prefix):
+    dataframe = build_dataframe(data, columns)
+    horizontal_dataframe = dataframe.T.reset_index()
+    horizontal_dataframe.columns = ["Campo"] + [
+        f"{item_prefix} {index + 1}" for index in range(len(dataframe))
+    ]
+    return horizontal_dataframe
 
 
 def save_excel(tender_info):
@@ -73,13 +87,19 @@ def save_excel(tender_info):
             tender_info.get("ficha"),
             FICHA_COLUMNS,
         ),
-        "Criterios de evaluación": build_dataframe(
+        "Criterios de evaluación": build_horizontal_dataframe(
             tender_info.get("criterios_evaluacion", []),
             CRITERIOS_COLUMNS,
+            "Criterio",
         ),
         "Equipo profesional": build_dataframe(
             tender_info.get("equipo_profesional", []),
             EQUIPO_COLUMNS,
+        ),
+        "Objetivos": build_horizontal_dataframe(
+            tender_info.get("objetivos"),
+            OBJETIVOS_COLUMNS,
+            "Objetivo",
         ),
     }
 

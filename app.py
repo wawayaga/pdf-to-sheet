@@ -1,4 +1,5 @@
 import gradio as gr
+import traceback
 
 from pipeline import run_pipeline
 
@@ -19,6 +20,15 @@ def process_pdf(uploaded_pdf):
         extracted_info, excel_path = run_pipeline(pdf_path)
     except ValueError as error:
         gr.Warning(str(error))
+        return (
+            None,
+            None,
+            gr.update(visible=False),
+            gr.update(visible=False),
+        )
+    except Exception as error:
+        traceback.print_exc()
+        gr.Error(f"El procesamiento falló: {error}")
         return (
             None,
             None,
